@@ -1,17 +1,4 @@
-# -*- coding: utf-8 -*-
-import sqlite3
-import logging
-import asyncio
-import os
-import threading
-import qrcode
-from io import BytesIO
-from fastapi import FastAPI
-import uvicorn
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, InputFile
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, filters,
-    ContextTypes, CallbackQueryHandler
+# -*- coding: utf-8 -*- CallbackQueryHandler
 )
 
 # ================== CONFIG ==================
@@ -56,36 +43,7 @@ def init_db():
 
 init_db()
 
-def db_exec(query, params=()):
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    c = conn.cursor()
-    try:
-        c.execute(query, params)
-        conn.commit()
-        res = c.fetchall()
-    finally:
-        conn.close()
-    return res
 
-def get_all_admins():
-    res = db_exec("SELECT user_id FROM admins")
-    return [row[0] for row in res] if res else []
-
-def get_config(key, default=None):
-    res = db_exec("SELECT value FROM config WHERE key=?", (key,))
-    return res[0][0] if res else default
-
-def set_config(key, value):
-    db_exec("INSERT OR REPLACE INTO config (key, value) VALUES (?,?)", (key, value))
-
-# ================== FASTAPI ==================
-web_app = FastAPI()
-
-@web_app.get("/")
-def read_root(): return {"status": "Alive"}
-
-def run_web():
-    port = int(os.environ.get("PORT", 8080))
     uvicorn.run(web_app, host="0.0.0.0", port=port)
 
 # ================== KEYBOARDS & STATE ==================
@@ -167,54 +125,7 @@ async def verify_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     plan_photo = get_config("plan_photo")
     if plan_photo:
-        await query.message.reply_photo(photo=plan_photo, caption=plan_text, reply_markup=get_plan_keyboard(), parse_mode="HTML")
-    else:
-        await query.message.reply_text(plan_text, reply_markup=get_plan_keyboard(), parse_mode="HTML")
-
-async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    plan = query.data.split("_")[1]
-    context.user_data['plan'] = plan
-    
-    upi_id = get_config("upi_id")
-    if not upi_id:
-        return await query.message.reply_text("❌ Admin has not set UPI ID yet. Please contact admin.")
-
-    amount = "15.64" if plan == "15" else "17.89" if plan == "17" else "25"
-    upi_url = f"upi://pay?pa={upi_id}&pn=Payment&am={amount}&cu=INR"
-    
-    qr = qrcode.QRCode(box_size=10, border=4)
-    qr.add_data(upi_url)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    
-    bio = BytesIO()
-    bio.name = 'qr.png'
-    img.save(bio, 'PNG')
-    bio.seek(0)
-    
-    qr_caption = f"📸 <b>{f_txt('SCAN TO PAY')}</b>\n\nAmount: <b>{amount} Rs</b>\nUPI: <code>{upi_id}</code>"
-    await query.message.reply_photo(photo=InputFile(bio, 'qr.png'), caption=qr_caption, reply_markup=get_qr_keyboard(), parse_mode="HTML")
-
-async def qr_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "cancel_pay":
-        await query.message.delete()
-        return
-        
-    if query.data == "paid":
-        context.user_data['waiting_screenshot'] = True
-        await query.message.reply_text("📸 Please send your Payment Screenshot now.")
-
-# Naya Fix: Screenshot ko sahi se handle karna
-async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get('waiting_screenshot'): return
-    
-    user_id = update.effective_user.id
-    username = update.effective_user.username or "No Username"
+        a
     photo = update.message.photo[-1].file_id
     plan = context.user_data.get('plan', 'Unknown')
     
