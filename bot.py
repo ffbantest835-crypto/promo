@@ -87,17 +87,9 @@ def get_join_keyboard():
     channels = db_exec("SELECT name, link FROM channels")
     kb = []
     for ch in channels:
-        # style="primary" = Blue Button
-        kb.append([InlineKeyboardButton(f"Join {ch[0]}", url=ch[1], style="primary")])
-    # style="success" = Green Button
-    kb.append([InlineKeyboardButton("✅ Verify Membership", callback_data="verify_membership", style="success")])
+        kb.append([InlineKeyboardButton(f"Join {ch[0]}", url=ch[1], style="primary")]) # Blue
+    kb.append([InlineKeyboardButton("✅ Verify Membership", callback_data="verify_membership", style="success")]) # Green
     return InlineKeyboardMarkup(kb)
-
-def get_main_keyboard():
-    kb = [
-        [KeyboardButton("📚 Get Methods"), KeyboardButton("💬 Request Method")]
-    ]
-    return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
 # ================== BOT HANDLERS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -125,11 +117,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
     else:
-        await update.message.reply_text(
-            f"👋 <b>{f_txt('WELCOME TO PROMO BOT')}</b>\n\nUse buttons below:",
-            reply_markup=get_main_keyboard(),
-            parse_mode="HTML"
-        )
+        # Agar koi channel add nahi hai, toh direct methods send karo
+        await send_methods_to_user(update, context)
 
 async def verify_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -141,49 +130,45 @@ async def verify_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for ch_id, ch_name in channels:
         try:
-            member = await context.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
+            # Format ID correctly
+            chat_id = int(ch_id) if ch_id.lstrip('-').isdigit() else ch_id
+            member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
             if member.status in ['left', 'kicked']:
                 not_joined.append(ch_name)
-        except: pass 
+        except Exception as e:
+            # Agar bot admin nahi hai, toh error aayega
+            logger.error(f"Check failed for {ch_name}: {e}")
+            not_joined.append(f"{ch_name} (Bot is not Admin!)")
             
     if not_joined:
-        return await query.message.reply_text(f"❌ You have not joined: {', '.join(not_joined)}\nPlease join and try again.", reply_markup=get_join_keyboard())
+        return await query.message.reply_text(
+            f"❌ You have not joined or verified: {', '.join(not_joined)}\n\n"
+            f"Make sure you joined all channels. If this is a bot issue, tell admin.", 
+            reply_markup=get_join_keyboard()
+        )
         
     db_exec("UPDATE users SET joined=1 WHERE user_id=?", (user_id,))
-    await query.message.reply_text(f"✅ <b>{f_txt('VERIFICATION SUCCESSFUL')}</b>\nNow you can access methods.", reply_markup=get_main_keyboard(), parse_mode="HTML")
+    await query.message.reply_text(f"✅ <b>{f_txt('VERIFICATION SUCCESSFUL')}</b>\nHere are your methods:", parse_mode="HTML")
+    
+    # Automatically send methods after verification
+    await send_methods_to_user(update, context, is_callback=True)
 
-async def get_methods(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_methods_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
     methods = db_exec("SELECT type, content FROM methods")
     if not methods:
-        return await update.message.reply_text("❌ No methods available yet.")
+        msg = "❌ No methods available yet. Please wait!"
+        if is_callback: await update.callback_query.message.reply_text(msg)
+        else: await update.message.reply_text(msg)
+        return
         
-    await update.message.reply_text(f"🎁 <b>{f_txt('HERE ARE YOUR METHODS')}:</b>", parse_mode="HTML")
     for m_type, content in methods:
-        if m_type == 'video':
-            await update.message.reply_video(video=content, caption="🎥 Method Video")
-        elif m_type == 'text':
-            await update.message.reply_text(f"📝 <b>Method:</b>\n\n{content}", parse_mode="HTML")
-
-async def request_method(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    res = db_exec("SELECT joined FROM users WHERE user_id=?", (user_id,))
-    if not res or res[0][0] == 0:
-        return await update.message.reply_text("❌ Please verify your membership first! Send /start")
-        
-    user_states[user_id] = 'requesting_channel'
-    await update.message.reply_text("📝 Please enter the Channel/Group name for which you need the method:")
-
-async def process_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    username = update.effective_user.username or "No Username"
-    text = update.message.text
-    
-    db_exec("INSERT INTO requests (user_id, username, channel_name) VALUES (?,?,?)", (user_id, username, text))
-    user_states[user_id] = None
-    await update.message.reply_text("✅ <b>Request Sent!</b>\nAdmin will review it soon.", reply_markup=get_main_keyboard(), parse_mode="HTML")
-    
-    for admin in get_all_admins():
-        try: await context.bot.send_message(admin, f"🔔 <b>NEW REQUEST</b>\nUser: @{username} (<code>{user_id}</code>)\nChannel: {text}", parse_mode="HTML")
+        try:
+            if m_type == 'video':
+                if is_callback: await update.callback_query.message.reply_video(video=content, caption="🎥 Method Video")
+                else: await update.message.reply_video(video=content, caption="🎥 Method Video")
+            elif m_type == 'text':
+                if is_callback: await update.callback_query.message.reply_text(f"📝 <b>Method:</b>\n\n{content}", parse_mode="HTML")
+                else: await update.message.reply_text(f"📝 <b>Method:</b>\n\n{content}", parse_mode="HTML")
         except: pass
 
 # ================== OWNER PANEL ==================
@@ -193,7 +178,7 @@ async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     kb = [
         [InlineKeyboardButton("➕ Add Channel", callback_data="admin_add_ch", style="primary"), InlineKeyboardButton("➖ Remove Channel", callback_data="admin_rem_ch", style="danger")],
-        [InlineKeyboardButton("📊 Check All Members", callback_data="admin_members", style="success"), InlineKeyboardButton("📋 View Requests", callback_data="admin_requests", style="primary")],
+        [InlineKeyboardButton("📊 Check All Members", callback_data="admin_members", style="success"), InlineKeyboardButton("🎥 Add Video Method", callback_data="admin_add_vid", style="primary")],
         [InlineKeyboardButton("👑 Add Admin", callback_data="admin_add", style="primary")]
     ]
     await update.message.reply_text(f"<b>👑 {f_txt('OWNER PANEL')}</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
@@ -209,6 +194,10 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "admin_add_ch":
         await query.edit_message_text("🔗 Send Channel Link, ID, and Name separated by comma.\n\n<b>Format:</b>\n<code>https://t.me/yourchannel, -1001234567890, My Channel</code>", parse_mode="HTML")
         user_states[uid] = 'add_channel'
+        
+    elif data == "admin_add_vid":
+        await query.edit_message_text("🎥 Please send the Video now:")
+        user_states[uid] = 'waiting_video'
         
     elif data == "admin_rem_ch":
         channels = db_exec("SELECT id, name FROM channels")
@@ -229,13 +218,6 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for u in users[:20]:
             text += f"🆔 <code>{u[0]}</code> | @{u[1]}\n"
         if len(users) > 20: text += f"... and {len(users)-20} more."
-        await query.edit_message_text(text, parse_mode="HTML")
-        
-    elif data == "admin_requests":
-        reqs = db_exec("SELECT user_id, username, channel_name FROM requests ORDER BY id DESC LIMIT 15")
-        text = f"📋 <b>Recent Requests:</b>\n\n"
-        for r in reqs:
-            text += f"👤 @{r[1]} (<code>{r[0]}</code>)\n📢 {r[2]}\n\n"
         await query.edit_message_text(text, parse_mode="HTML")
         
     elif data == "admin_add":
@@ -265,12 +247,6 @@ async def admin_state_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(f"✅ {p_style('Admin Added')}", parse_mode="HTML")
         user_states[uid] = None
 
-# ================== METHOD SAVING ==================
-async def add_method_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in get_all_admins(): return
-    user_states[update.effective_user.id] = 'waiting_video'
-    await update.message.reply_text("🎥 Please send the Video now:")
-
 async def save_method_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if user_states.get(uid) == 'waiting_video' and update.message.video:
@@ -293,17 +269,13 @@ def main():
 
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("owner", owner_panel))
-    app_bot.add_handler(CommandHandler("addmethodvideo", add_method_video))
     app_bot.add_handler(CommandHandler("savemethod", save_method_text))
     
     app_bot.add_handler(CallbackQueryHandler(verify_membership, pattern="^verify_membership$"))
     app_bot.add_handler(CallbackQueryHandler(admin_callbacks, pattern="^(admin_|delch_)"))
     
-    app_bot.add_handler(MessageHandler(filters.Text(["📚 Get Methods"]), get_methods))
-    app_bot.add_handler(MessageHandler(filters.Text(["💬 Request Method"]), request_method))
-    
     app_bot.add_handler(MessageHandler(filters.VIDEO, save_method_video))
-    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u,c: process_request(u,c) if user_states.get(u.effective_user.id) == 'requesting_channel' else admin_state_router(u,c)))
+    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_state_router))
 
     logger.info("Promo Bot started successfully.")
     app_bot.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
