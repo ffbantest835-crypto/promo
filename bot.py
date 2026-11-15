@@ -12,8 +12,8 @@ from telegram.ext import (
     ContextTypes, CallbackQueryHandler
 )
 
-# ================== CONFIG (FROM ENV VARIABLES) ==================
-BOT_TOKEN = os.getenv("BOT_TOKEN") # Token ab yahan se aayega
+# ================== CONFIG ==================
+BOT_TOKEN = os.getenv("BOT_TOKEN", "9083925993:AAE9ikMA5FfkfUz7bsjNWWOOW65YE0tH8Q0")
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ def get_all_admins():
     res = db_exec("SELECT user_id FROM admins")
     return [row[0] for row in res] if res else []
 
-# ================== FASTAPI (FOR RENDER PORT) ==================
+# ================== FASTAPI ==================
 web_app = FastAPI()
 
 @web_app.get("/")
@@ -80,15 +80,17 @@ def run_web():
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(web_app, host="0.0.0.0", port=port)
 
-# ================== STATE & KEYBOARDS ==================
+# ================== KEYBOARDS ==================
 user_states = {}
 
 def get_join_keyboard():
     channels = db_exec("SELECT name, link FROM channels")
     kb = []
     for ch in channels:
-        kb.append([InlineKeyboardButton(f"Join {ch[0]}", url=ch[1])])
-    kb.append([InlineKeyboardButton("✅ Verify Membership", callback_data="verify_membership")])
+        # style="primary" = Blue Button
+        kb.append([InlineKeyboardButton(f"Join {ch[0]}", url=ch[1], style="primary")])
+    # style="success" = Green Button
+    kb.append([InlineKeyboardButton("✅ Verify Membership", callback_data="verify_membership", style="success")])
     return InlineKeyboardMarkup(kb)
 
 def get_main_keyboard():
@@ -190,9 +192,9 @@ async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid not in get_all_admins(): return
     
     kb = [
-        [InlineKeyboardButton("➕ Add Channel", callback_data="admin_add_ch"), InlineKeyboardButton("➖ Remove Channel", callback_data="admin_rem_ch")],
-        [InlineKeyboardButton("📊 Check All Members", callback_data="admin_members"), InlineKeyboardButton("📋 View Requests", callback_data="admin_requests")],
-        [InlineKeyboardButton("👑 Add Admin", callback_data="admin_add")]
+        [InlineKeyboardButton("➕ Add Channel", callback_data="admin_add_ch", style="primary"), InlineKeyboardButton("➖ Remove Channel", callback_data="admin_rem_ch", style="danger")],
+        [InlineKeyboardButton("📊 Check All Members", callback_data="admin_members", style="success"), InlineKeyboardButton("📋 View Requests", callback_data="admin_requests", style="primary")],
+        [InlineKeyboardButton("👑 Add Admin", callback_data="admin_add", style="primary")]
     ]
     await update.message.reply_text(f"<b>👑 {f_txt('OWNER PANEL')}</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
@@ -213,7 +215,7 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not channels: return await query.edit_message_text("❌ No channels added.")
         kb = []
         for ch_id, name in channels:
-            kb.append([InlineKeyboardButton(f"❌ Delete {name}", callback_data=f"delch_{ch_id}")])
+            kb.append([InlineKeyboardButton(f"❌ Delete {name}", callback_data=f"delch_{ch_id}", style="danger")])
         await query.edit_message_text("Select channel to delete:", reply_markup=InlineKeyboardMarkup(kb))
         
     elif data.startswith("delch_"):
@@ -286,13 +288,7 @@ async def save_method_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================== MAIN ==================
 def main():
-    # Start FastAPI server in background for Render
     threading.Thread(target=run_web, daemon=True).start()
-    
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN not found in Environment Variables!")
-        return
-
     app_bot = Application.builder().token(BOT_TOKEN).build()
 
     app_bot.add_handler(CommandHandler("start", start))
