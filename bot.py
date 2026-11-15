@@ -135,41 +135,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try: await context.bot.send_message(admin, f"🆕 <b>NEW USER</b>\nID: <code>{user_id}</code>\n@{username}", parse_mode="HTML")
             except: pass
 
-    # 1. WELCOME MESSAGE
+    # Welcome Message
     welcome_text = f"👋 <b>{f_txt('WELCOME TO PAID POMPOM BOT')}</b>\n\nPlease join the group to continue:"
     
     welcome_photo = get_config("welcome_photo")
     welcome_video = get_config("welcome_video")
 
     if welcome_video:
-        msg = await update.message.reply_video(video=welcome_video, caption=welcome_text, reply_markup=get_join_keyboard(), parse_mode="HTML")
+        await update.message.reply_video(video=welcome_video, caption=welcome_text, reply_markup=get_join_keyboard(), parse_mode="HTML")
     elif welcome_photo:
-        msg = await update.message.reply_photo(photo=welcome_photo, caption=welcome_text, reply_markup=get_join_keyboard(), parse_mode="HTML")
+        await update.message.reply_photo(photo=welcome_photo, caption=welcome_text, reply_markup=get_join_keyboard(), parse_mode="HTML")
     else:
-        msg = await update.message.reply_text(welcome_text, reply_markup=get_join_keyboard(), parse_mode="HTML")
+        await update.message.reply_text(welcome_text, reply_markup=get_join_keyboard(), parse_mode="HTML")
 
 async def verify_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     
-    # Group check logic (Same as previous)
-    channels = db_exec("SELECT channel_id, name FROM channels")
-    not_joined = []
-    for ch_id, ch_name in channels:
-        try:
-            chat_id = int(ch_id) if ch_id.lstrip('-').isdigit() else ch_id
-            member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
-            if member.status in ['left', 'kicked']:
-                not_joined.append(ch_name)
-        except: pass
-            
-    if not_joined:
-        return await query.message.reply_text(f"❌ You have not joined: {', '.join(not_joined)}", reply_markup=get_join_keyboard())
-        
+    # BYPASS: Jo bhi button dabaye, seedha verify ho jayega
     db_exec("UPDATE users SET joined=1 WHERE user_id=?", (user_id,))
     
-    # 2. PRICE LIST MESSAGE
+    # Price List
     plan_text = (
         f"💦 <b>{f_txt('WELCOME TO POOM GROUP')}</b> 💦\n\n"
         f"💰 <b>{f_txt('PRICE LIST')}</b> 💰\n\n"
@@ -184,7 +171,6 @@ async def verify_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.message.reply_text(plan_text, reply_markup=get_plan_keyboard(), parse_mode="HTML")
 
-# 3. QR CODE GENERATION
 async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -195,11 +181,9 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not upi_id:
         return await query.message.reply_text("❌ Admin has not set UPI ID yet. Please contact admin.")
 
-    # UPI Payment String
     amount = "15.64" if plan == "15" else "17.89" if plan == "17" else "25"
     upi_url = f"upi://pay?pa={upi_id}&pn=Payment&am={amount}&cu=INR"
     
-    # QR Generate
     qr = qrcode.QRCode(box_size=10, border=4)
     qr.add_data(upi_url)
     qr.make(fit=True)
@@ -211,7 +195,6 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bio.seek(0)
     
     qr_caption = f"📸 <b>{f_txt('SCAN TO PAY')}</b>\n\nAmount: <b>{amount} Rs</b>\nUPI: <code>{upi_id}</code>"
-    
     await query.message.reply_photo(photo=InputFile(bio, 'qr.png'), caption=qr_caption, reply_markup=get_qr_keyboard(), parse_mode="HTML")
 
 async def qr_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -226,7 +209,7 @@ async def qr_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['waiting_screenshot'] = True
         await query.message.reply_text("📸 Please send your Payment Screenshot now.")
 
-# 4. SCREENSHOT VERIFICATION
+# Naya Fix: Screenshot ko sahi se handle karna
 async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('waiting_screenshot'): return
     
@@ -235,20 +218,17 @@ async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1].file_id
     plan = context.user_data.get('plan', 'Unknown')
     
-    # Save Request
     db_exec("INSERT INTO requests (user_id, username, plan, screenshot) VALUES (?,?,?,?)", (user_id, username, plan, photo))
     req_id = db_exec("SELECT last_insert_rowid()")[0][0]
     
     context.user_data['waiting_screenshot'] = False
     await update.message.reply_text("⏳ Screenshot sent for verification. Please wait for approval.")
     
-    # Send to Admins
     admin_text = f"🔔 <b>NEW PAYMENT PROOF</b>\n\nUser: @{username} (<code>{user_id}</code>)\nPlan: {plan} Rs"
     for admin in get_all_admins():
         try: await context.bot.send_photo(admin, photo=photo, caption=admin_text, reply_markup=get_approve_keyboard(user_id, req_id), parse_mode="HTML")
-        except: pass
+        except Exception as e: logger.error(f"Failed to send to admin {admin}: {e}")
 
-# 5. ADMIN APPROVE / DISAPPROVE
 async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -259,10 +239,7 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "approve":
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ <b>APPROVED by Admin</b>", parse_mode="HTML")
         db_exec("UPDATE requests SET status='Approved' WHERE id=?", (req_id,))
-        
-        await context.bot.send_message(user_id, "🎉 <b>Payment Approved!</b>\n\nYour access has been granted. You can now request to join the group.")
-        # Note: Bot needs to auto-approve join requests if bot is admin in the group.
-        
+        await context.bot.send_message(user_id, "🎉 <b>Payment Approved!</b>\n\nYour access has been granted.")
     elif action == "disapprove":
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ <b>REJECTED by Admin</b>", parse_mode="HTML")
         db_exec("UPDATE requests SET status='Rejected' WHERE id=?", (req_id,))
@@ -351,6 +328,7 @@ async def handle_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     state = user_states.get(uid)
     
+    # Admin Panel Photo Handlers
     if state == 'set_welcome' and update.message.photo:
         set_config("welcome_photo", update.message.photo[-1].file_id)
         await update.message.reply_text("✅ Welcome Photo Saved!")
@@ -359,6 +337,9 @@ async def handle_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_config("plan_photo", update.message.photo[-1].file_id)
         await update.message.reply_text("✅ Plan Photo Saved!")
         user_states[uid] = None
+    # User Screenshot Handler
+    else:
+        await handle_screenshot(update, context)
 
 async def handle_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -383,7 +364,6 @@ def main():
     
     app_bot.add_handler(MessageHandler(filters.PHOTO, handle_photos))
     app_bot.add_handler(MessageHandler(filters.VIDEO, handle_videos))
-    app_bot.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, handle_screenshot))
     
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_state_router))
 
